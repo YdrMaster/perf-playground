@@ -99,6 +99,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "customizable-buddy"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3de1786f7e24046d21e4361b92da5dc0b75951485b8287537de9376bb3c1295f"
+
+[[package]]
 name = "dtb-walker"
 version = "0.2.0-alpha.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -150,7 +156,9 @@ name = "kernel"
 version = "0.0.1"
 dependencies = [
  "console",
+ "customizable-buddy",
  "dtb-walker",
+ "linker",
  "page-table",
  "r0",
  "riscv",
@@ -169,6 +177,10 @@ name = "libc"
 version = "0.2.132"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8371e4e5341c3a96db127eb2465ac681ced4c433e01dd0e938adbef26ba93ba5"
+
+[[package]]
+name = "linker"
+version = "0.0.1"
 
 [[package]]
 name = "lock_api"
