@@ -27,7 +27,7 @@ static MEM_INFO: Once<linker::MemInfo> = Once::new();
 
 extern "C" fn rust_main(_hartid: usize, dtb_addr: usize) -> ! {
     // 收集内存信息
-    let info = *MEM_INFO.call_once(|| linker::MemInfo::new());
+    let info = *MEM_INFO.call_once(|| unsafe { linker::MemInfo::locate() });
     // 上链接位置
     let _sstatus = unsafe { boot_page_table().launch(info.base, info.offset) };
     // 清零 .bss
@@ -83,9 +83,10 @@ const STACK_SIZE: usize = 4096 * 4;
 #[link_section = ".text.entry"]
 unsafe extern "C" fn _start() -> ! {
     core::arch::asm!(
-        "la  sp, _end + {size}",
+        "la  sp, {_end} + {size}",
         "j   {main}",
         size = const STACK_SIZE,
+        _end =   sym linker::_end,
         main =   sym rust_main,
         options(noreturn),
     )

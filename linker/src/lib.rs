@@ -54,9 +54,13 @@ pub struct MemInfo {
 }
 
 impl MemInfo {
-    /// 探测内核内存信息。
+    /// 定位内核内核内存信息。
+    ///
+    /// # Safety
+    ///
+    /// 在物理地址空间中调用，用于自动定位内核物理地址。
     #[inline]
-    pub fn new() -> Self {
+    pub unsafe fn locate() -> Self {
         let base = unsafe { &_start as *const _ as usize };
         Self {
             base,

@@ -32,12 +32,14 @@ pub trait Console: Sync {
 static CONSOLE: Once<&'static dyn Console> = Once::new();
 
 /// 用户调用这个函数设置输出的方法。
+#[inline]
 pub fn init_console(console: &'static dyn Console) {
     CONSOLE.call_once(|| console);
     log::set_logger(&Logger).unwrap();
 }
 
 /// 根据环境变量设置日志级别。
+#[inline]
 pub fn set_log_level(env: Option<&str>) {
     use log::LevelFilter as Lv;
     log::set_max_level(env.and_then(|s| Lv::from_str(s).ok()).unwrap_or(Lv::Trace));
@@ -105,6 +107,7 @@ impl Write for Logger {
 ///
 /// > **NOTICE** 强行塞一个如此简单的实现只是为了使用方便。但强行塞一个复杂的实现也是一样。将这个实现留给用户自己实现也是合适的。
 impl log::Log for Logger {
+    #[inline]
     fn enabled(&self, _metadata: &log::Metadata) -> bool {
         true
     }
@@ -128,5 +131,6 @@ impl log::Log for Logger {
         );
     }
 
+    #[inline]
     fn flush(&self) {}
 }
