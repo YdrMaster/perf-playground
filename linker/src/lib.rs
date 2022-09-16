@@ -29,31 +29,37 @@ SECTIONS {
         *(.bss .bss.*)
         *(.sbss .sbss.*)
     }
-    _end = ALIGN(4K);
+    _end = ALIGN(8);
 }";
-
-// 链接脚本里定义的符号。
-extern "C" {
-    /// 内核起始位置。
-    pub static _start: u64;
-
-    /// .bss 段起始位置。
-    pub static mut _bss: u64;
-
-    /// 内核结束位置。
-    pub static mut _end: u64;
-}
 
 /// 内核地址信息。
 #[derive(Clone, Copy, Debug)]
 pub struct MemInfo {
-    /// 物理地址。
-    pub base: usize,
-    /// 虚地址。
+    /// 线性区偏移。
+    ///
+    /// 即物理地址 0 映射的虚地址。
     pub offset: usize,
+    /// 物理地址结束位置映射的虚地址。
+    pub top: usize,
+
+    /// 内核虚地址。
+    pub start: usize,
+    /// .bss 虚地址。
+    pub bss: usize,
+    /// 内核结束位置虚地址。
+    pub end: usize,
 }
 
 impl MemInfo {
+    /// 非零初始化，避免 bss。
+    pub const INIT: Self = Self {
+        offset: usize::MAX,
+        top: usize::MAX,
+        start: usize::MAX,
+        bss: usize::MAX,
+        end: usize::MAX,
+    };
+
     /// 定位内核内核内存信息。
     ///
     /// # Safety
@@ -61,10 +67,19 @@ impl MemInfo {
     /// 在物理地址空间中调用，用于自动定位内核物理地址。
     #[inline]
     pub unsafe fn locate() -> Self {
-        let base = unsafe { &_start as *const _ as usize };
+        extern "C" {
+            fn _start();
+            fn _bss();
+            fn _end();
+        }
+
+        let offset = START - _start as usize;
         Self {
-            base,
-            offset: START - base,
+            offset,
+            top: 0,
+            start: _start as usize + offset,
+            bss: _bss as usize + offset,
+            end: _end as usize + offset,
         }
     }
 }

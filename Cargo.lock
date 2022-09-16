@@ -160,7 +160,7 @@ dependencies = [
  "dtb-walker",
  "linker",
  "page-table",
- "r0",
+ "rangemap",
  "riscv",
  "sbi-rt",
  "spin",
@@ -281,10 +281,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "r0"
-version = "1.0.0"
+name = "rangemap"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd7a31eed1591dcbc95d92ad7161908e72f4677f8fabf2a32ca49b4237cbf211"
+checksum = "0ea2d559b3970fe7aa56ce7432a3702ff4b20a57b543ae08b4850ee629353ea6"
 
 [[package]]
 name = "riscv"
