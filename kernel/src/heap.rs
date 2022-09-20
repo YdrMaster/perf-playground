@@ -16,8 +16,8 @@ struct Heap;
 static _HEAP: Heap = Heap;
 
 /// 建立页分配器。
-pub(crate) fn init_heap(info: MemInfo) {
-    unsafe { HEAP.init(3, NonNull::new_unchecked(info.start as *mut u8)) };
+pub(crate) fn init_heap(start: usize) {
+    unsafe { HEAP.init(3, NonNull::new_unchecked(start as *mut u8)) };
 }
 
 unsafe impl GlobalAlloc for Heap {

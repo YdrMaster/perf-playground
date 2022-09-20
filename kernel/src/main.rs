@@ -14,49 +14,101 @@
 #![no_main]
 #![feature(naked_functions, asm_sym, asm_const)]
 #![feature(default_alloc_error_handler)]
-#![deny(warnings)]
+// #![deny(warnings)]
 
 mod boot;
 mod heap;
+mod layout;
 mod page;
 
 #[macro_use]
 extern crate console;
 extern crate alloc;
 
+use address_space::PageManager;
 use boot::BootPageTable;
-use linker::MemInfo;
-use page_table::{Sv39, VmFlags};
-// use console::log;
+use core::{alloc::Layout, ptr::NonNull};
+use layout::MemLayout;
+use page::GLOBAL;
+use page_table::{MmuMeta, Pte, Sv39, VmFlags, PPN, VPN};
+use riscv::register::satp;
 use sbi_rt::*;
 
-static mut MEM_INFO: MemInfo = MemInfo::INIT;
+static mut MEM_INFO: MemLayout = MemLayout::INIT;
 
 extern "C" fn rust_main(_hartid: usize, dtb_addr: usize) -> ! {
     // 收集内存信息
-    unsafe { MEM_INFO = MemInfo::locate() };
-    let info = unsafe { MEM_INFO };
-    // 上链接位置
-    let _sstatus = unsafe {
+    unsafe {
+        MEM_INFO.locate();
+        // 上链接位置
         const ALIGN: usize = 4096 - 1;
-        let addr = (info.end - info.offset + STACK_SIZE + ALIGN) & !ALIGN;
-        BootPageTable::new(addr).launch(info.start - info.offset, info.offset)
-    };
+        let info = &MEM_INFO;
+        let addr = (info.p_end() + STACK_SIZE + ALIGN) & !ALIGN;
+        let _sstatus = BootPageTable::new(addr).launch(info.p_start(), info.offset());
+    }
     // 清零 .bss
-    unsafe { core::slice::from_raw_parts_mut(info.bss as _, info.end - info.bss).fill(0) };
+    unsafe { MEM_INFO.zero_bss() };
+    let info = unsafe { &MEM_INFO };
     // 确认打印可用
     console::init_console(&Console);
     console::set_log_level(option_env!("LOG"));
     console::test_log();
     // 初始化页分配
-    unsafe { MEM_INFO.top = page::init_global(info, dtb_addr) };
+    unsafe {
+        MEM_INFO.set_top(page::init_global(
+            info.start(),
+            info.offset(),
+            info.end(),
+            dtb_addr,
+        ))
+    };
     // 初始化堆分配
-    heap::init_heap(info);
-    // x
-    let mut manager = address_space::AddressSpace::<Sv39>::new();
-    manager.kernel(VmFlags::build_from_str("DAG_XWRV"));
+    heap::init_heap(info.start());
+    // 建立内核地址空间
+    let mut kernel = address_space::AddressSpace::<Sv39, Global>::new(Global);
+    kernel.kernel(VmFlags::build_from_str("DAG_XWRV"));
+    unsafe { satp::set(satp::Mode::Sv39, 0, kernel.root_ppn().val()) };
+    println!("{kernel:?}");
     system_reset(RESET_TYPE_SHUTDOWN, RESET_REASON_NO_REASON);
     unreachable!()
+}
+
+struct Global;
+
+impl PageManager<Sv39> for Global {
+    fn allocate(&mut self, flags: VmFlags<Sv39>, len: usize) -> Pte<Sv39> {
+        const PAGE_SIZE: usize = 1 << Sv39::PAGE_BITS;
+        let (ptr, _) = unsafe {
+            GLOBAL.allocate_layout::<u8>(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE))
+        }
+        .unwrap();
+        flags.build_pte(self.v_to_p(ptr))
+    }
+
+    fn deallocate(&mut self, pte: Pte<Sv39>, len: usize) {
+        todo!()
+    }
+
+    fn share(&mut self, pte: Pte<Sv39>, len: usize) -> (Pte<Sv39>, Pte<Sv39>) {
+        todo!()
+    }
+
+    fn exclude(&mut self, pte: Pte<Sv39>, len: usize) -> Pte<Sv39> {
+        todo!()
+    }
+
+    fn p_to_v<T>(&self, ppn: PPN<Sv39>) -> NonNull<T> {
+        unsafe {
+            NonNull::new_unchecked(
+                (VPN::<Sv39>::new(ppn.val()).base().val() + MEM_INFO.offset()) as _,
+            )
+        }
+    }
+
+    fn v_to_p<T>(&self, ptr: NonNull<T>) -> PPN<Sv39> {
+        let pa = ptr.as_ptr() as usize - unsafe { MEM_INFO.offset() };
+        PPN::new(pa >> Sv39::PAGE_BITS)
+    }
 }
 
 #[panic_handler]
@@ -109,59 +161,62 @@ unsafe extern "C" fn _start() -> ! {
 }
 
 mod address_space {
-    use crate::{page::GLOBAL, MEM_INFO};
+    use crate::MEM_INFO;
     use core::{alloc::Layout, fmt, ptr::NonNull};
     use page_table::{PageTable, PageTableFormatter, Pte, VAddr, VmFlags, VmMeta, PPN, VPN};
     use rangemap::RangeSet;
 
-    pub(crate) struct AddressSpace<Meta: VmMeta> {
+    pub(crate) struct AddressSpace<Meta: VmMeta, M: PageManager<Meta>> {
         segments: RangeSet<VPN<Meta>>,
         root: NonNull<Pte<Meta>>,
+        manager: M,
     }
 
-    impl<Meta: VmMeta> AddressSpace<Meta> {
+    impl<Meta: VmMeta, M: PageManager<Meta>> AddressSpace<Meta, M> {
         const PAGE_LAYOUT: Layout = unsafe {
             Layout::from_size_align_unchecked(1 << Meta::PAGE_BITS, 1 << Meta::PAGE_BITS)
         };
 
-        pub fn new() -> Self {
-            let (root, size) = unsafe { GLOBAL.allocate_layout(Self::PAGE_LAYOUT) }.unwrap();
-            assert_eq!(size, 4096);
+        pub fn new(mut manager: M) -> Self {
+            let ppn = manager.allocate(VmFlags::VALID, 1).ppn();
             Self {
                 segments: RangeSet::new(),
-                root,
+                root: manager.p_to_v(ppn),
+                manager,
             }
         }
 
+        pub fn root_ppn(&self) -> PPN<Meta> {
+            self.manager.v_to_p(self.root)
+        }
+
         pub fn kernel(&mut self, flags: VmFlags<Meta>) {
-            let info = unsafe { MEM_INFO };
+            let info = unsafe { &MEM_INFO };
             let top_entries = 1 << Meta::LEVEL_BITS.last().unwrap();
             let ppn_bits = Meta::pages_in_table(Meta::MAX_LEVEL - 1).trailing_zeros();
             // 内核线性段
             self.segments.insert(
-                VAddr::<Meta>::new(info.offset).floor()..VAddr::<Meta>::new(info.top).ceil(),
+                VAddr::<Meta>::new(info.offset()).floor()..VAddr::<Meta>::new(info.top()).ceil(),
             );
             // 页表
             unsafe { core::slice::from_raw_parts_mut(self.root.as_ptr(), top_entries) }
                 .iter_mut()
                 .skip(
-                    VAddr::<Meta>::new(info.offset)
+                    VAddr::<Meta>::new(info.offset())
                         .floor()
                         .index_in(Meta::MAX_LEVEL),
                 )
                 .take(
-                    VAddr::<Meta>::new(info.top - info.offset)
+                    VAddr::<Meta>::new(info.p_top())
                         .ceil()
                         .ceil(Meta::MAX_LEVEL),
                 )
                 .enumerate()
                 .for_each(|(i, pte)| *pte = flags.build_pte(PPN::new(i << ppn_bits)));
-
-            println!("{self:?}")
         }
     }
 
-    impl<Meta: VmMeta> fmt::Debug for AddressSpace<Meta> {
+    impl<Meta: VmMeta, M: PageManager<Meta>> fmt::Debug for AddressSpace<Meta, M> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             for seg in self.segments.iter() {
                 writeln!(
@@ -189,5 +244,7 @@ mod address_space {
         fn deallocate(&mut self, pte: Pte<Meta>, len: usize);
         fn share(&mut self, pte: Pte<Meta>, len: usize) -> (Pte<Meta>, Pte<Meta>);
         fn exclude(&mut self, pte: Pte<Meta>, len: usize) -> Pte<Meta>;
+        fn p_to_v<T>(&self, ppn: PPN<Meta>) -> NonNull<T>;
+        fn v_to_p<T>(&self, ptr: NonNull<T>) -> PPN<Meta>;
     }
 }

@@ -36,12 +36,7 @@ SECTIONS {
 #[derive(Clone, Copy, Debug)]
 pub struct MemInfo {
     /// 线性区偏移。
-    ///
-    /// 即物理地址 0 映射的虚地址。
     pub offset: usize,
-    /// 物理地址结束位置映射的虚地址。
-    pub top: usize,
-
     /// 内核虚地址。
     pub start: usize,
     /// .bss 虚地址。
@@ -54,7 +49,6 @@ impl MemInfo {
     /// 非零初始化，避免 bss。
     pub const INIT: Self = Self {
         offset: usize::MAX,
-        top: usize::MAX,
         start: usize::MAX,
         bss: usize::MAX,
         end: usize::MAX,
@@ -76,7 +70,6 @@ impl MemInfo {
         let offset = START - _start as usize;
         Self {
             offset,
-            top: 0,
             start: _start as usize + offset,
             bss: _bss as usize + offset,
             end: _end as usize + offset,
