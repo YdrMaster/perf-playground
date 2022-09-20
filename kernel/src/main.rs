@@ -26,6 +26,7 @@ extern crate alloc;
 
 use boot::BootPageTable;
 use linker::MemInfo;
+use page_table::{Sv39, VmFlags};
 // use console::log;
 use sbi_rt::*;
 
@@ -52,8 +53,8 @@ extern "C" fn rust_main(_hartid: usize, dtb_addr: usize) -> ! {
     // 初始化堆分配
     heap::init_heap(info);
     // x
-    let mut manager = address_space::Manager::new();
-    manager.kernel();
+    let mut manager = address_space::AddressSpace::<Sv39>::new();
+    manager.kernel(VmFlags::build_from_str("DAG_XWRV"));
     system_reset(RESET_TYPE_SHUTDOWN, RESET_REASON_NO_REASON);
     unreachable!()
 }
@@ -109,53 +110,84 @@ unsafe extern "C" fn _start() -> ! {
 
 mod address_space {
     use crate::{page::GLOBAL, MEM_INFO};
-    use core::{alloc::Layout, ptr::NonNull};
-    use page_table::{PageTable, PageTableFormatter, Pte, Sv39, VAddr, VmFlags, VmMeta, PPN, VPN};
-    use rangemap::RangeMap;
+    use core::{alloc::Layout, fmt, ptr::NonNull};
+    use page_table::{PageTable, PageTableFormatter, Pte, VAddr, VmFlags, VmMeta, PPN, VPN};
+    use rangemap::RangeSet;
 
-    pub(crate) struct Manager {
-        segments: RangeMap<VPN<Sv39>, ()>,
-        pages: NonNull<Pte<Sv39>>,
+    pub(crate) struct AddressSpace<Meta: VmMeta> {
+        segments: RangeSet<VPN<Meta>>,
+        root: NonNull<Pte<Meta>>,
     }
 
-    impl Manager {
+    impl<Meta: VmMeta> AddressSpace<Meta> {
+        const PAGE_LAYOUT: Layout = unsafe {
+            Layout::from_size_align_unchecked(1 << Meta::PAGE_BITS, 1 << Meta::PAGE_BITS)
+        };
+
         pub fn new() -> Self {
-            let (root, size) = unsafe { GLOBAL.allocate_layout(PAGE_LAYOUT) }.unwrap();
+            let (root, size) = unsafe { GLOBAL.allocate_layout(Self::PAGE_LAYOUT) }.unwrap();
             assert_eq!(size, 4096);
             Self {
-                segments: RangeMap::new(),
-                pages: root,
+                segments: RangeSet::new(),
+                root,
             }
         }
 
-        pub fn kernel(&mut self) {
-            const FLAGS: VmFlags<Sv39> = VmFlags::build_from_str("DAG_XWRV");
-
+        pub fn kernel(&mut self, flags: VmFlags<Meta>) {
             let info = unsafe { MEM_INFO };
-            let ptop = info.top - info.offset;
-            self.segments
-                .insert(VPN::new(0)..VPN::new(ptop >> 30 << 18), ());
-            let table = unsafe { core::slice::from_raw_parts_mut(self.pages.as_ptr(), 512) };
-            let base = VAddr::<Sv39>::new(info.offset)
-                .floor()
-                .index_in(Sv39::MAX_LEVEL);
-            table[base..]
+            let top_entries = 1 << Meta::LEVEL_BITS.last().unwrap();
+            let ppn_bits = Meta::pages_in_table(Meta::MAX_LEVEL - 1).trailing_zeros();
+            // 内核线性段
+            self.segments.insert(
+                VAddr::<Meta>::new(info.offset).floor()..VAddr::<Meta>::new(info.top).ceil(),
+            );
+            // 页表
+            unsafe { core::slice::from_raw_parts_mut(self.root.as_ptr(), top_entries) }
                 .iter_mut()
-                .take(ptop >> 30)
+                .skip(
+                    VAddr::<Meta>::new(info.offset)
+                        .floor()
+                        .index_in(Meta::MAX_LEVEL),
+                )
+                .take(
+                    VAddr::<Meta>::new(info.top - info.offset)
+                        .ceil()
+                        .ceil(Meta::MAX_LEVEL),
+                )
                 .enumerate()
-                .for_each(|(i, pte)| *pte = FLAGS.build_pte(PPN::new(i << 18)));
-            println!("{:?}", self.segments);
-            println!(
+                .for_each(|(i, pte)| *pte = flags.build_pte(PPN::new(i << ppn_bits)));
+
+            println!("{self:?}")
+        }
+    }
+
+    impl<Meta: VmMeta> fmt::Debug for AddressSpace<Meta> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for seg in self.segments.iter() {
+                writeln!(
+                    f,
+                    "{:#x}..{:#x}",
+                    seg.start.base().val(),
+                    seg.end.base().val()
+                )?;
+            }
+            writeln!(
+                f,
                 "{:?}",
                 PageTableFormatter {
-                    pt: unsafe { PageTable::from_root(self.pages) },
+                    pt: unsafe { PageTable::from_root(self.root) },
                     f: |ppn| unsafe {
-                        NonNull::new_unchecked(VPN::<Sv39>::new(ppn.val()).base().val() as _)
+                        NonNull::new_unchecked(VPN::<Meta>::new(ppn.val()).base().val() as _)
                     }
                 }
             )
         }
     }
 
-    const PAGE_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(4096, 4096) };
+    pub trait PageManager<Meta: VmMeta> {
+        fn allocate(&mut self, flags: VmFlags<Meta>, len: usize) -> Pte<Meta>;
+        fn deallocate(&mut self, pte: Pte<Meta>, len: usize);
+        fn share(&mut self, pte: Pte<Meta>, len: usize) -> (Pte<Meta>, Pte<Meta>);
+        fn exclude(&mut self, pte: Pte<Meta>, len: usize) -> Pte<Meta>;
+    }
 }

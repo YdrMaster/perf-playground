@@ -37,6 +37,6 @@ unsafe impl GlobalAlloc for Heap {
 
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        HEAP.deallocate(NonNull::new(ptr).unwrap(), layout.size())
+        HEAP.deallocate_layout(NonNull::new(ptr).unwrap(), layout)
     }
 }

@@ -10,7 +10,7 @@ authors = ["YdrMaster <ydrml@hotmail.com>"]
 linker = { path = "../linker" }
 console = { path = "../console" }
 sbi-rt = { git = "https://github.com/rustsbi/sbi-rt", branch = "dev" }
-customizable-buddy = "0.0.1"
+customizable-buddy = "0.0.2"
 dtb-walker = "0.2.0-alpha.3"
 page-table = "0.0.6"
 rangemap = "1.0.3"
