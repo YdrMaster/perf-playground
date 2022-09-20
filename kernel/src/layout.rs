@@ -56,20 +56,12 @@ impl MemLayout {
         self.linked.start
     }
 
-    pub const fn end(&self) -> usize {
-        self.linked.end
-    }
-
     pub const fn top(&self) -> usize {
         self.top
     }
 
     pub const fn p_start(&self) -> usize {
         self.linked.start - self.linked.offset
-    }
-
-    pub const fn p_end(&self) -> usize {
-        self.linked.end - self.linked.offset
     }
 
     pub const fn p_top(&self) -> usize {

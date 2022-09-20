@@ -5,7 +5,6 @@ use core::{
     ptr::NonNull,
 };
 use customizable_buddy::{BuddyAllocator, LinkedListBuddy, UsizeBuddy};
-use linker::MemInfo;
 
 /// 全局页帧分配器。
 static mut HEAP: BuddyAllocator<20, UsizeBuddy, LinkedListBuddy> = BuddyAllocator::new();
