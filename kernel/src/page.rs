@@ -2,16 +2,23 @@
 use customizable_buddy::{BuddyAllocator, LinkedListBuddy, UsizeBuddy};
 use page_table::{MmuMeta, Sv39};
 
+use crate::layout::MemLayout;
+
 /// 全局页帧分配器。
 pub static mut GLOBAL: BuddyAllocator<20, UsizeBuddy, LinkedListBuddy> = BuddyAllocator::new();
 
 /// 建立页分配器。
-pub(crate) fn init_global(start: usize, offset: usize, end: usize, dtb_addr: usize) -> usize {
+pub(crate) fn init_global(layout: &MemLayout, dtb_addr: usize) -> usize {
     use dtb_walker::{Dtb, DtbObj, HeaderError::*, Property, WalkOperation::*};
-    unsafe { GLOBAL.init(Sv39::PAGE_BITS, NonNull::new_unchecked(start as *mut u8)) };
+    unsafe {
+        GLOBAL.init(
+            Sv39::PAGE_BITS,
+            NonNull::new_unchecked(layout.start() as *mut u8),
+        )
+    };
     // 从设备树解析内存信息
     let dtb = unsafe {
-        Dtb::from_raw_parts_filtered((dtb_addr + offset) as _, |e| {
+        Dtb::from_raw_parts_filtered(layout.p_to_v(dtb_addr) as _, |e| {
             matches!(e, Misaligned(4) | LastCompVersion(_))
         })
     };
@@ -25,15 +32,14 @@ pub(crate) fn init_global(start: usize, offset: usize, end: usize, dtb_addr: usi
             }
         }
         DtbObj::Property(Property::Reg(reg)) if path.name().starts_with("memory") => {
+            let p_start = layout.p_start();
             for segment in reg {
                 unsafe {
-                    let (ptr, size) = if segment.contains(&(start - offset)) {
-                        const ALIGN: usize = 4096 - 1;
-                        let addr = (end + crate::STACK_SIZE + ALIGN + 4096) & !ALIGN;
-                        let size = segment.end + offset - addr;
-                        (addr as *mut u8, size)
+                    let (ptr, size) = if segment.contains(&p_start) {
+                        let addr = layout.boot_pt_root() + 4096;
+                        (addr as *mut u8, layout.p_to_v(segment.end) - addr)
                     } else {
-                        (segment.start as _, segment.len())
+                        (layout.p_to_v(segment.start) as _, segment.len())
                     };
                     max = max.max(ptr as usize + size);
                     GLOBAL.transfer(NonNull::new_unchecked(ptr), size);

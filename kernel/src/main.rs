@@ -25,7 +25,7 @@ mod page;
 extern crate console;
 extern crate alloc;
 
-use address_space::PageManager;
+use address_space::{AddressSpace, PageManager};
 use boot::BootPageTable;
 use core::{alloc::Layout, ptr::NonNull};
 use layout::MemLayout;
@@ -38,37 +38,31 @@ static mut MEM_INFO: MemLayout = MemLayout::INIT;
 
 extern "C" fn rust_main(_hartid: usize, dtb_addr: usize) -> ! {
     // 收集内存信息
-    unsafe {
-        MEM_INFO.locate();
-        // 上链接位置
-        const ALIGN: usize = 4096 - 1;
-        let info = &MEM_INFO;
-        let addr = (info.p_end() + STACK_SIZE + ALIGN) & !ALIGN;
-        let _sstatus = BootPageTable::new(addr).launch(info.p_start(), info.offset());
-    }
+    unsafe { MEM_INFO.locate() };
+    // 上链接位置
+    let _ = unsafe {
+        BootPageTable(MEM_INFO.p_boot_pt_root()).launch(MEM_INFO.p_start(), MEM_INFO.offset());
+    };
+    let info =
+        unsafe { &mut *(MEM_INFO.p_to_v((&MEM_INFO) as *const _ as usize) as *mut MemLayout) };
     // 清零 .bss
-    unsafe { MEM_INFO.zero_bss() };
-    let info = unsafe { &MEM_INFO };
+    info.zero_bss();
     // 确认打印可用
     console::init_console(&Console);
     console::set_log_level(option_env!("LOG"));
     console::test_log();
     // 初始化页分配
-    unsafe {
-        MEM_INFO.set_top(page::init_global(
-            info.start(),
-            info.offset(),
-            info.end(),
-            dtb_addr,
-        ))
-    };
+    unsafe { info.set_top(page::init_global(info, dtb_addr)) };
     // 初始化堆分配
     heap::init_heap(info.start());
     // 建立内核地址空间
-    let mut kernel = address_space::AddressSpace::<Sv39, Global>::new(Global);
+    let mut kernel = AddressSpace::<Sv39, Global>::new(Global);
     kernel.kernel(VmFlags::build_from_str("DAG_XWRV"));
     unsafe { satp::set(satp::Mode::Sv39, 0, kernel.root_ppn().val()) };
     println!("{kernel:?}");
+    // 回收启动页表
+    unsafe { GLOBAL.deallocate(NonNull::<u8>::new_unchecked(info.boot_pt_root() as _), 4096) };
+    unsafe { println!("{GLOBAL:?}") };
     system_reset(RESET_TYPE_SHUTDOWN, RESET_REASON_NO_REASON);
     unreachable!()
 }
@@ -99,15 +93,12 @@ impl PageManager<Sv39> for Global {
 
     fn p_to_v<T>(&self, ppn: PPN<Sv39>) -> NonNull<T> {
         unsafe {
-            NonNull::new_unchecked(
-                (VPN::<Sv39>::new(ppn.val()).base().val() + MEM_INFO.offset()) as _,
-            )
+            NonNull::new_unchecked((MEM_INFO.p_to_v(VPN::<Sv39>::new(ppn.val()).base().val())) as _)
         }
     }
 
     fn v_to_p<T>(&self, ptr: NonNull<T>) -> PPN<Sv39> {
-        let pa = ptr.as_ptr() as usize - unsafe { MEM_INFO.offset() };
-        PPN::new(pa >> Sv39::PAGE_BITS)
+        PPN::new((unsafe { MEM_INFO.v_to_p(ptr.as_ptr()) }) >> Sv39::PAGE_BITS)
     }
 }
 

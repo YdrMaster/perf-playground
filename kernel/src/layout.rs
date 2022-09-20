@@ -1,4 +1,8 @@
-﻿use linker::MemInfo;
+﻿use core::ptr::NonNull;
+
+use crate::STACK_SIZE;
+use linker::MemInfo;
+use page_table::{MmuMeta, Pte, Sv39};
 
 pub struct MemLayout {
     linked: MemInfo,
@@ -26,8 +30,26 @@ impl MemLayout {
         };
     }
 
+    pub fn p_boot_pt_root(&self) -> NonNull<Pte<Sv39>> {
+        unsafe { NonNull::new_unchecked((self.boot_pt_root() - self.linked.offset) as _) }
+    }
+
+    /// 启动页表根节点：启动栈之后的第一个页
+    pub fn boot_pt_root(&self) -> usize {
+        const ALIGN: usize = (1 << Sv39::PAGE_BITS) - 1;
+        (self.linked.end + STACK_SIZE + ALIGN) & !ALIGN
+    }
+
     pub const fn offset(&self) -> usize {
         self.linked.offset
+    }
+
+    pub const fn p_to_v(&self, paddr: usize) -> usize {
+        paddr + self.linked.offset
+    }
+
+    pub fn v_to_p<T>(&self, ptr: *const T) -> usize {
+        ptr as usize - self.linked.offset
     }
 
     pub const fn start(&self) -> usize {

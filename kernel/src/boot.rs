@@ -2,15 +2,9 @@
 use page_table::{MmuMeta, Pte, Sv39, VAddr, VmFlags, VmMeta, PPN};
 
 /// 启动页表。
-pub(crate) struct BootPageTable(NonNull<Pte<Sv39>>);
+pub(crate) struct BootPageTable(pub NonNull<Pte<Sv39>>);
 
 impl BootPageTable {
-    #[inline]
-    pub fn new(addr: usize) -> Self {
-        assert!(addr.trailing_zeros() as usize >= Sv39::PAGE_BITS);
-        Self(NonNull::new(addr as _).unwrap())
-    }
-
     /// 根据内核实际位置初始化启动页表，然后启动地址转换跃迁到高地址，并设置内核对用户页的访问权限。
     ///
     /// # Safety
