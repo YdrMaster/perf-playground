@@ -1,21 +1,14 @@
-﻿use core::ptr::NonNull;
+﻿use crate::{layout::KernelLayout, non_null};
 use customizable_buddy::{BuddyAllocator, LinkedListBuddy, UsizeBuddy};
 use page_table::{MmuMeta, Sv39};
-
-use crate::layout::MemLayout;
 
 /// 全局页帧分配器。
 pub static mut GLOBAL: BuddyAllocator<20, UsizeBuddy, LinkedListBuddy> = BuddyAllocator::new();
 
 /// 建立页分配器。
-pub(crate) fn init_global(layout: &MemLayout, dtb_addr: usize) -> usize {
+pub(crate) fn init_global(layout: &KernelLayout, dtb_addr: usize) -> usize {
     use dtb_walker::{Dtb, DtbObj, HeaderError::*, Property, WalkOperation::*};
-    unsafe {
-        GLOBAL.init(
-            Sv39::PAGE_BITS,
-            NonNull::new_unchecked(layout.start() as *mut u8),
-        )
-    };
+    unsafe { GLOBAL.init(Sv39::PAGE_BITS, non_null::<u8>(layout.start())) };
     // 从设备树解析内存信息
     let dtb = unsafe {
         Dtb::from_raw_parts_filtered(layout.p_to_v(dtb_addr) as _, |e| {
@@ -32,7 +25,7 @@ pub(crate) fn init_global(layout: &MemLayout, dtb_addr: usize) -> usize {
             }
         }
         DtbObj::Property(Property::Reg(reg)) if path.name().starts_with("memory") => {
-            let p_start = layout.p_start();
+            let p_start = layout.v_to_p(layout.start());
             for segment in reg {
                 unsafe {
                     let (ptr, size) = if segment.contains(&p_start) {
@@ -42,7 +35,7 @@ pub(crate) fn init_global(layout: &MemLayout, dtb_addr: usize) -> usize {
                         (layout.p_to_v(segment.start) as _, segment.len())
                     };
                     max = max.max(ptr as usize + size);
-                    GLOBAL.transfer(NonNull::new_unchecked(ptr), size);
+                    GLOBAL.transfer(non_null::<u8>(ptr as _), size);
                 };
             }
             StepOut

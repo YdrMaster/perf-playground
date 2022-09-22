@@ -1,4 +1,4 @@
-﻿use crate::MEM_INFO;
+﻿use crate::{non_null, LAYOUT};
 use core::{fmt, ptr::NonNull};
 use page_table::{PageTable, PageTableFormatter, Pte, VAddr, VmFlags, VmMeta, PPN, VPN};
 use rangemap::RangeSet;
@@ -24,7 +24,7 @@ impl<Meta: VmMeta, M: PageManager<Meta>> AddressSpace<Meta, M> {
     }
 
     pub fn kernel(&mut self, flags: VmFlags<Meta>) {
-        let info = unsafe { &MEM_INFO };
+        let info = unsafe { &LAYOUT };
         let top_entries = 1 << Meta::LEVEL_BITS.last().unwrap();
         let ppn_bits = Meta::pages_in_table(Meta::MAX_LEVEL - 1).trailing_zeros();
         // 内核线性段
@@ -40,7 +40,7 @@ impl<Meta: VmMeta, M: PageManager<Meta>> AddressSpace<Meta, M> {
                     .index_in(Meta::MAX_LEVEL),
             )
             .take(
-                VAddr::<Meta>::new(info.p_top())
+                VAddr::<Meta>::new(info.v_to_p(info.top()))
                     .ceil()
                     .ceil(Meta::MAX_LEVEL),
             )
@@ -64,9 +64,7 @@ impl<Meta: VmMeta, M: PageManager<Meta>> fmt::Debug for AddressSpace<Meta, M> {
             "{:?}",
             PageTableFormatter {
                 pt: unsafe { PageTable::from_root(self.root) },
-                f: |ppn| unsafe {
-                    NonNull::new_unchecked(VPN::<Meta>::new(ppn.val()).base().val() as _)
-                }
+                f: |ppn| non_null(VPN::<Meta>::new(ppn.val()).base().val())
             }
         )
     }

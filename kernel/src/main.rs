@@ -1,15 +1,3 @@
-//! ## Stage 0
-//!
-//!    1. 上链接位置
-//!    2. 清零 .bss
-//!    3. 确认打印可用
-//!    4. 建立页分配器（第一次解析设备树得到内存信息）
-//!    5. 建立内核地址空间
-//!
-//! ## Stage 1
-//!
-//!    1. 上内核地址空间
-
 #![no_std]
 #![no_main]
 #![feature(naked_functions, asm_sym, asm_const)]
@@ -28,27 +16,26 @@ extern crate alloc;
 
 use boot::BootPageTable;
 use core::{alloc::Layout, ptr::NonNull};
-use layout::MemLayout;
+use layout::KernelLayout;
 use page::GLOBAL;
 use page_table::{MmuMeta, Pte, Sv39, VmFlags, PPN, VPN};
 use riscv::register::satp;
 use sbi_rt::*;
 use space::{AddressSpace, PageManager};
 
-static mut MEM_INFO: MemLayout = MemLayout::INIT;
+static mut LAYOUT: KernelLayout = KernelLayout::INIT;
 
 extern "C" fn rust_main(_hartid: usize, dtb_addr: usize) -> ! {
     // 收集内存信息
-    unsafe { MEM_INFO.locate() };
+    unsafe { LAYOUT.locate() };
     // 上链接位置
     let _ = unsafe {
-        BootPageTable(MEM_INFO.p_boot_pt_root()).launch(MEM_INFO.p_start(), MEM_INFO.offset());
+        BootPageTable(non_null(LAYOUT.v_to_p(LAYOUT.boot_pt_root()))).launch(&LAYOUT);
     };
     // FIXME 强行通过虚地址访问静态变量。不这么写编译器没法知道这个变量有两个地址。
-    let info =
-        unsafe { &mut *(MEM_INFO.p_to_v((&MEM_INFO) as *const _ as usize) as *mut MemLayout) };
+    let info = unsafe { &mut *(LAYOUT.p_to_v((&LAYOUT) as *const _ as _) as *mut KernelLayout) };
     // 清零 .bss
-    info.zero_bss();
+    unsafe { info.zero_bss() };
     // 确认打印可用
     console::init_console(&Console);
     console::set_log_level(option_env!("LOG"));
@@ -63,7 +50,7 @@ extern "C" fn rust_main(_hartid: usize, dtb_addr: usize) -> ! {
     unsafe { satp::set(satp::Mode::Sv39, 0, kernel.root_ppn().val()) };
     println!("{kernel:?}");
     // 回收启动页表
-    unsafe { GLOBAL.deallocate(NonNull::<u8>::new_unchecked(info.boot_pt_root() as _), 4096) };
+    unsafe { GLOBAL.deallocate(non_null::<u8>(info.boot_pt_root() as _), 4096) };
     unsafe { println!("{GLOBAL:?}") };
     system_reset(RESET_TYPE_SHUTDOWN, RESET_REASON_NO_REASON);
     unreachable!()
@@ -96,13 +83,11 @@ impl PageManager<Sv39> for Global {
     }
 
     fn p_to_v<T>(&self, ppn: PPN<Sv39>) -> NonNull<T> {
-        unsafe {
-            NonNull::new_unchecked((MEM_INFO.p_to_v(VPN::<Sv39>::new(ppn.val()).base().val())) as _)
-        }
+        non_null(unsafe { LAYOUT.p_to_v(VPN::<Sv39>::new(ppn.val()).base().val()) } as _)
     }
 
     fn v_to_p<T>(&self, ptr: NonNull<T>) -> PPN<Sv39> {
-        PPN::new((unsafe { MEM_INFO.v_to_p(ptr.as_ptr()) }) >> Sv39::PAGE_BITS)
+        PPN::new((unsafe { LAYOUT.v_to_p(ptr.as_ptr() as _) }) >> Sv39::PAGE_BITS)
     }
 }
 
@@ -138,9 +123,6 @@ fn asid_detect() -> usize {
     }
 }
 
-/// 启动栈容量。
-const STACK_SIZE: usize = 4096 * 4;
-
 #[naked]
 #[no_mangle]
 #[link_section = ".text.entry"]
@@ -149,8 +131,13 @@ unsafe extern "C" fn _start() -> ! {
         "la sp, _end + {size}",
         "mv tp, a0",
         "j  {main}",
-        size = const STACK_SIZE,
+        size = const KernelLayout::BOOT_STACK_SIZE,
         main =   sym rust_main,
         options(noreturn),
     )
+}
+
+#[inline]
+fn non_null<T>(addr: usize) -> NonNull<T> {
+    unsafe { NonNull::new_unchecked(addr as _) }
 }

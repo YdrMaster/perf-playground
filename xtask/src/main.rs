@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const TARGET_ARCH: &str = "riscv64imac-unknown-none-elf";
+const TARGET_ARCH: &str = "riscv64gc-unknown-none-elf";
 
 static PROJECT: Lazy<&'static Path> =
     Lazy::new(|| Path::new(std::env!("CARGO_MANIFEST_DIR")).parent().unwrap());

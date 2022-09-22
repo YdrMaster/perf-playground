@@ -1,4 +1,5 @@
-﻿use core::{arch::asm, ptr::NonNull};
+﻿use crate::layout::KernelLayout;
+use core::{arch::asm, ptr::NonNull};
 use page_table::{MmuMeta, Pte, Sv39, VAddr, VmFlags, VmMeta, PPN};
 
 /// 启动页表。
@@ -11,15 +12,17 @@ impl BootPageTable {
     ///
     /// 调用前后位于不同的地址空间，必须内联。
     #[inline(always)]
-    pub unsafe fn launch(&self, pbase: usize, offset: usize) -> usize {
+    pub unsafe fn launch(&self, layout: &KernelLayout) -> usize {
         use riscv::register::satp;
         const FLAGS: VmFlags<Sv39> = VmFlags::build_from_str("DAG_XWRV");
 
+        let start = layout.v_to_p(layout.start());
+        let offset = layout.offset();
         // 确保虚实地址在 1 GiB 内对齐
         assert!(offset.trailing_zeros() >= 30);
         let table = unsafe { core::slice::from_raw_parts_mut(self.0.as_ptr(), 512) };
         // 映射跳板页
-        let base = VAddr::<Sv39>::new(pbase).floor().index_in(Sv39::MAX_LEVEL);
+        let base = VAddr::<Sv39>::new(start).floor().index_in(Sv39::MAX_LEVEL);
         table[base] = FLAGS.build_pte(PPN::new(base << 18));
         // 映射物理地址空间的前 128 GiB
         let base = VAddr::<Sv39>::new(offset).floor().index_in(Sv39::MAX_LEVEL);

@@ -1,4 +1,4 @@
-﻿use crate::page::GLOBAL;
+﻿use crate::{non_null, page::GLOBAL};
 use alloc::alloc::handle_alloc_error;
 use core::{
     alloc::{GlobalAlloc, Layout},
@@ -16,7 +16,7 @@ static _HEAP: Heap = Heap;
 
 /// 建立页分配器。
 pub(crate) fn init_heap(start: usize) {
-    unsafe { HEAP.init(3, NonNull::new_unchecked(start as *mut u8)) };
+    unsafe { HEAP.init(3, non_null::<u8>(start)) };
 }
 
 unsafe impl GlobalAlloc for Heap {
