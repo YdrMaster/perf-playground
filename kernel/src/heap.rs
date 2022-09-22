@@ -6,7 +6,7 @@ use core::{
 };
 use customizable_buddy::{BuddyAllocator, LinkedListBuddy, UsizeBuddy};
 
-/// 全局页帧分配器。
+/// 内核堆分配器。
 static mut HEAP: BuddyAllocator<20, UsizeBuddy, LinkedListBuddy> = BuddyAllocator::new();
 
 struct Heap;
@@ -14,7 +14,7 @@ struct Heap;
 #[global_allocator]
 static _HEAP: Heap = Heap;
 
-/// 建立页分配器。
+/// 建立堆分配器。
 pub(crate) fn init_heap(start: usize) {
     unsafe { HEAP.init(3, non_null::<u8>(start)) };
 }

@@ -6,6 +6,8 @@ use page_table::{MmuMeta, Sv39};
 pub static mut GLOBAL: BuddyAllocator<20, UsizeBuddy, LinkedListBuddy> = BuddyAllocator::new();
 
 /// 建立页分配器。
+///
+/// 返回线性地址空间的结束位置。
 pub(crate) fn init_global(layout: &KernelLayout, dtb_addr: usize) -> usize {
     use dtb_walker::{Dtb, DtbObj, HeaderError::*, Property, WalkOperation::*};
     unsafe { GLOBAL.init(Sv39::PAGE_BITS, non_null::<u8>(layout.start())) };
@@ -29,13 +31,14 @@ pub(crate) fn init_global(layout: &KernelLayout, dtb_addr: usize) -> usize {
             for segment in reg {
                 unsafe {
                     let (ptr, size) = if segment.contains(&p_start) {
+                        // 从启动页表之后由页帧分配器管理
                         let addr = layout.boot_pt_root() + 4096;
-                        (addr as *mut u8, layout.p_to_v(segment.end) - addr)
+                        (addr, layout.p_to_v(segment.end) - addr)
                     } else {
-                        (layout.p_to_v(segment.start) as _, segment.len())
+                        (layout.p_to_v(segment.start), segment.len())
                     };
-                    max = max.max(ptr as usize + size);
-                    GLOBAL.transfer(non_null::<u8>(ptr as _), size);
+                    max = max.max(ptr + size);
+                    GLOBAL.transfer(non_null::<u8>(ptr), size);
                 };
             }
             StepOut
