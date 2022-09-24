@@ -3,34 +3,45 @@
 #![no_std]
 #![deny(warnings, missing_docs)]
 
+use core::fmt::{Display, Formatter, Result};
+
 /// 内核链接位置。
 pub const START: usize = 0xffff_ffc0_8020_0000;
 
-/// 链接脚本内容。
-pub const BODY: &str = "
+/// 链接脚本。
+pub struct Script;
+
+impl Display for Script {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        writeln!(
+            f,
+            "\
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
-SECTIONS {
-    . = START;
-    .text : {
+SECTIONS {{
+    . = {START};
+    .text : {{
         *(.text.entry)
         *(.text .text.*)
-    }
-    .rodata : {
+    }}
+    .rodata : {{
         *(.rodata .rodata.*)
         *(.srodata .srodata.*)
-    }
-    .data : {
+    }}
+    .data : {{
         *(.data .data.*)
         *(.sdata .sdata.*)
-    }
-    .bss : ALIGN(8) {
+    }}
+    .bss : ALIGN(8) {{
         _bss = .;
         *(.bss .bss.*)
         *(.sbss .sbss.*)
-    }
+    }}
     _end = ALIGN(8);
-}";
+}}"
+        )
+    }
+}
 
 /// 内核地址信息。
 #[derive(Clone, Copy, Debug)]
